@@ -6,8 +6,9 @@ import ffmpeg from "fluent-ffmpeg";
 import ytdl from "ytdl-core";
 import fs from "fs-extra";
 import sharp from "sharp";
-import PDFDocument from "pdfkit";
+import PDFDocument, { image } from "pdfkit";
 import puppeteer from "puppeteer";
+import { CropSettings } from "./types";
 dotenv.config();
 
 const app = express();
@@ -27,6 +28,7 @@ app.post("/", async (req: Request, res: Response) => {
 
     const url = req.body.url as string;
     const timestamps = req.body.timestamps as number[];
+    const cropSettings = req.body.cropSettings as CropSettings;
 
     // get the video ID
     const videoId = ytdl.getURLVideoID(url);
@@ -64,7 +66,7 @@ app.post("/", async (req: Request, res: Response) => {
             console.log("Will generate " + filenames.join(", "));
         })
         .screenshots({
-            timestamps: timestamps.map((t) => Math.round(t * 100) / 100),
+            timestamps: timestamps,
             filename: "thumbnail-%s.png",
             folder: pathToFolder,
             // size: "320x240",
@@ -103,22 +105,52 @@ app.post("/", async (req: Request, res: Response) => {
         return aTime - bTime;
     });
 
-    let imageHeight = 1080;
-    let imageWidth = 1920;
-    let topOffset = 750;
-    let height = imageHeight - topOffset;
-
+    const imageHeight = 1080;
+    const imageWidth = 1920;
+    const leftDefault = 0;
     let imagePaths = [];
 
     for (const imageName of imageNames) {
         console.log(imageName);
         const newImagePath = pathToFolder + "/" + "cropped-" + imageName;
+
+        // get the crop
+        const timestamp = Number(imageName.split("-")[1].replace(".png", ""));
+        const thisImageHeight = Math.round(
+            cropSettings[timestamp]
+                ? imageHeight -
+                      ((100 - cropSettings[timestamp].bottomOffset) / 100) *
+                          imageHeight -
+                      (cropSettings[timestamp].bottom / 100) * imageHeight
+                : imageHeight
+        );
+
+        const thisImageWidth = Math.round(
+            cropSettings[timestamp]
+                ? imageWidth -
+                      (cropSettings[timestamp].left / 100) * imageWidth -
+                      ((100 - cropSettings[timestamp].leftOffset) / 100) *
+                          imageWidth
+                : imageWidth
+        );
+
+        const thisTopOffset = Math.round(
+            cropSettings[timestamp]
+                ? ((100 - cropSettings[timestamp].bottomOffset) / 100) *
+                      imageHeight
+                : imageHeight
+        );
+
+        const thisLeft = Math.round(
+            cropSettings[timestamp] ? cropSettings[timestamp].left : leftDefault
+        );
+
         await sharp(pathToFolder + "/" + imageName)
             .extract({
-                width: imageWidth,
-                height: height,
-                left: 0,
-                top: topOffset,
+                width: thisImageWidth,
+                height: thisImageHeight,
+                left: thisLeft,
+                top: thisTopOffset,
             })
             .toFile(newImagePath);
 
@@ -156,6 +188,44 @@ app.post("/", async (req: Request, res: Response) => {
     //     success: true,
     //     body: req.body,
     // });
+});
+
+/**
+ * Gets basic information about the video.
+ */
+app.get("/info", async (req: Request, res: Response) => {
+    const url = req.query.url as string;
+    console.log(url);
+
+    if (!url) {
+        // reject
+        res.status(400).json({
+            error: true,
+            message: "No video URL provided!",
+        });
+
+        return;
+    }
+
+    // validate the url
+
+    if (!ytdl.validateURL(url)) {
+        // reject
+        res.status(400).json({
+            error: true,
+            message: "Invalid URL format!",
+        });
+
+        return;
+    }
+
+    const basicInfo = (await ytdl.getBasicInfo(url)).videoDetails;
+
+    console.log(basicInfo);
+    return res.json({
+        success: true,
+        data: basicInfo,
+    });
 });
 
 app.listen(port, () => {
