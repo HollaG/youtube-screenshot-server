@@ -82,10 +82,22 @@ app.post("/", async (req: Request, res: Response) => {
 
     await waitForScreenshots();
 
-    // get the filenames of all images and sort them according to the timestamp
+    // get the filenames of all images and sort them according to the timestamp.
     const imageNames = (await fs.readdir(pathToFolder)).filter(
         (f) => f !== "video"
     );
+
+    // necessary step if not it will be sorted by ascii
+    imageNames.sort((a: string, b: string) => {
+        // file format: thumbnail-%s.png
+        const aTimeStr = a.split("-")[1].replace(".png", "");
+        const bTimeStr = b.split("-")[1].replace(".png", "");
+
+        const aTime = Number(aTimeStr);
+        const bTime = Number(bTimeStr);
+
+        return aTime - bTime;
+    });
 
     let imageHeight = 1080;
     let imageWidth = 1920;
@@ -129,6 +141,7 @@ app.post("/", async (req: Request, res: Response) => {
         format: "A4",
     });
 
+    console.log("---------- DONE -----------");
     res.json({
         success: true,
         body: req.body,
