@@ -31,9 +31,12 @@ app.post("/", async (req: Request, res: Response) => {
     // get the video ID
     const videoId = ytdl.getURLVideoID(url);
 
-    // create a new folder
+    // get the video name
+    const videoTitle = (await ytdl.getBasicInfo(url)).videoDetails.title;
+
+    // create a new folder and ensure it's empty
     const pathToFolder = "./public/screenshots/" + videoId;
-    await fs.ensureDir(pathToFolder);
+    await fs.emptyDir(pathToFolder);
 
     const videoStream = ytdl(url, { quality: "highestvideo" });
     const pathToVideo = pathToFolder + "/video/" + "video.mp4";
@@ -87,6 +90,7 @@ app.post("/", async (req: Request, res: Response) => {
         (f) => f !== "video"
     );
 
+    console.log({ imageNames });
     // necessary step if not it will be sorted by ascii
     imageNames.sort((a: string, b: string) => {
         // file format: thumbnail-%s.png
@@ -122,7 +126,7 @@ app.post("/", async (req: Request, res: Response) => {
     }
 
     // generate HTML
-    const html = generateHtml(pathToFolder, imageNames, "myimage");
+    const html = generateHtml(imageNames, videoTitle);
 
     fs.writeFile(pathToFolder + "/result.html", html);
     // generate pdf from html
@@ -134,37 +138,39 @@ app.post("/", async (req: Request, res: Response) => {
 
     await page.emulateMediaType("screen");
 
+    const pdfPath = pathToFolder + "/result.pdf";
     const pdf = await page.pdf({
-        path: pathToFolder + "/result.pdf",
+        path: pdfPath,
         margin: { top: "100px", right: "50px", bottom: "100px", left: "50px" },
         printBackground: true,
         format: "A4",
     });
 
     console.log("---------- DONE -----------");
-    res.json({
-        success: true,
-        body: req.body,
+    res.download(pdfPath, (err) => {
+        // clear the folder
+        fs.rm(pathToFolder, { recursive: true, force: true });
     });
+
+    // res.json({
+    //     success: true,
+    //     body: req.body,
+    // });
 });
 
 app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);
 });
 
-function generateHtml(
-    pathToFolder: string,
-    imageNames: string[],
-    videoName: string
-) {
+function generateHtml(imageNames: string[], videoTitle: string) {
     let html = `
     <!DOCTYPE html>
     <html>
     <head>
-        <title>HTML content</title>
+        <title>${videoTitle}}</title>
     </head>
     <body>
-        <h1 style="text-align: center"> ${videoName} </h1> 
+        <h1 style="text-align: center"> ${videoTitle} </h1> 
         <div style="display: flex; flex-direction: column; justify-content: center">
             ${imageNames
                 .map((imageName) => `<img src="cropped-${imageName}"/>`)
