@@ -1,4 +1,4 @@
-import express, { Express, Request, Response } from "express";
+import express, { Express, Request, Response, response } from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -6,7 +6,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ytdl from "ytdl-core";
 import fs from "fs-extra";
 import sharp from "sharp";
-import PDFDocument, { image } from "pdfkit";
+import PDFDocument, { image, path } from "pdfkit";
 import puppeteer from "puppeteer";
 import { CropSettings } from "./types";
 dotenv.config();
@@ -40,52 +40,161 @@ app.post("/", async (req: Request, res: Response) => {
     const pathToFolder = "./public/screenshots/" + videoId;
     await fs.emptyDir(pathToFolder);
 
-    const videoStream = ytdl(url, { quality: "highestvideo" });
+    // console.log(info.formats.filter(f => f.qualityLabel === ""));
+    await fs.ensureDir(pathToFolder + "/video/");
+
     const pathToVideo = pathToFolder + "/video/" + "video.mp4";
 
-    await fs.ensureDir(pathToFolder + "/video/");
-    videoStream.pipe(fs.createWriteStream(pathToVideo));
+    let ERROR_COUNT = 0;
+    function downloadVideo(url: string) {
+        return new Promise((resolve, reject) => {
+            let startTime: number;
+            const start = () => {
+                const videoStream = ytdl(url, { quality: 136 });
+                videoStream.once("response", () => {
+                    startTime = Date.now();
+                    console.log("Stream started");
+                });
+
+                videoStream.on("error", (e) => {
+                    console.log(e.name);
+                    console.log({ e });
+                });
+
+                videoStream.on("progress", (chunkLength, downloaded, total) => {
+                    const percent = downloaded / total;
+
+                    console.log(percent);
+                });
+
+                videoStream.pipe(fs.createWriteStream(pathToVideo));
+
+                videoStream.on("finish", () => {
+                    resolve(null);
+                    console.log("Finished piping");
+
+                    videoStream.destroy();
+                });
+            };
+
+            start();
+        });
+    }
+
+    await downloadVideo(url);
 
     /**
-     * Helper function to convert the `end` event to asynchronous
-     * Avoids nested code
-     *
-     */
+    const videoStream = ytdl(url, { quality: 136 });
+
+
+
+
+
+
+
+    
+    videoStream.once("response", () => {
+        startTime = Date.now();
+        console.log("Stream started");
+    });
+    videoStream.on("progress", (chunkLength, downloaded, total) => {
+        const percent = downloaded / total;
+        const downloaded_minutes = (Date.now() - startTime) / 1000 / 60;
+        const estimated_download_time =
+            downloaded_minutes / percent - downloaded_minutes;
+
+        console.log(estimated_download_time);
+        // if the estimated download time is more than 1.5 minutes then we cancel and restart the download, this value works fine for me but you may need to change it based on your server/internet speed.
+        if (Number(estimated_download_time.toFixed(2)) >= 1.5) {
+            console.warn(
+                "Seems like YouTube is limiting our download speed, restarting the download to mitigate the problem.."
+            );
+            //   stream.destroy();
+            //   start();
+        }
+    });
+
+    videoStream.on("error", console.log);
+
+    videoStream.pipe(fs.createWriteStream(pathToVideo));
+
     function waitForStreamPiped() {
         return new Promise((resolve, reject) => {
-            videoStream.on("end", resolve);
+            videoStream.on("finish", () => {
+                resolve(null);
+                console.log("Finished piping");
+            });
         });
     }
 
     await waitForStreamPiped();
+    */
 
     // get the screenshots
-    const screenshotProcess = ffmpeg(pathToVideo)
-        .on("error", (err) => console.log(err))
-        .on("filenames", function (filenames) {
-            console.log("Will generate " + filenames.join(", "));
-        })
-        .screenshots({
-            timestamps: timestamps,
-            filename: "thumbnail-%s.png",
-            folder: pathToFolder,
-            // size: "320x240",
+    // const screenshotProcess = ffmpeg(pathToVideo)
+    //     .on("error", (err) => console.log(err))
+    //     .on("filenames", function (filenames) {
+    //         console.log("Will generate " + filenames.join(", "));
+    //     })
+    //     .screenshots({
+    //         timestamps: timestamps,
+    //         filename: "thumbnail-%s.png",
+    //         folder: pathToFolder,
+    //         // size: "320x240",
+    //     });
+
+    let i = 0;
+    let screenshotProcess: ffmpeg.FfmpegCommand;
+    function takeScreenshots(pathToVideo: string) {
+        console.log("Running takeScreenshots");
+        return new Promise((resolve, reject) => {
+            ffmpeg(pathToVideo)
+                .on("start", () => {
+                    if (i < 1) {
+                        console.log(`start taking screenshots`);
+                    }
+                })
+                .on("end", () => {
+                    i = i + 1;
+                    console.log(`taken screenshot: ${i}`);
+
+                    if (i < timestamps.length) {
+                        takeScreenshots(pathToVideo).then(() => resolve(null));
+                    } else {
+                        // end
+                        resolve(null);
+                    }
+                })
+                .screenshots({
+                    count: 1,
+                    timemarks: [timestamps[i]],
+                    filename: "thumbnail-%s.png",
+                    folder: pathToFolder,
+                });
         });
+    }
+
+    await takeScreenshots(pathToVideo);
+
+    console.log("Completed take screenshots");
 
     /**
      * Helper function to convert the 'finished screenshot' event to async
      *
      */
-    function waitForScreenshots() {
-        return new Promise((resolve, reject) => {
-            screenshotProcess.on("end", () => {
-                console.log(null, "Screenshots taken");
-                resolve(null);
-            });
-        });
-    }
+    // function waitForScreenshots() {
+    //     return new Promise((resolve, reject) => {
+    //         screenshotProcess.on("end", () => {
+    //             console.log(i, timestamps.length);
+    //             if (i === timestamps.length) {
+    //                 console.log(null, "Screenshots taken");
+    //                 resolve(null);
+    //             }
+    //         });
+    //     });
+    // }
 
-    await waitForScreenshots();
+    // await waitForScreenshots();
 
     // get the filenames of all images and sort them according to the timestamp.
     const imageNames = (await fs.readdir(pathToFolder)).filter(
@@ -105,8 +214,25 @@ app.post("/", async (req: Request, res: Response) => {
         return aTime - bTime;
     });
 
-    const imageHeight = 1080;
-    const imageWidth = 1920;
+    function getMetadata(): Promise<ffmpeg.FfprobeData> {
+        return new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(pathToVideo, function (err, metadata) {
+                if (err) {
+                    reject(err);
+                } else {
+                    // metadata should contain 'width', 'height' and 'display_aspect_ratio'
+                    resolve(metadata);
+                }
+            });
+        });
+    }
+
+    const { streams } = await getMetadata();
+    // streams[0] contains the video metadata.
+    // streams[1] contains the audio metadata, but in this case our video file doesn't have audio metadata.
+
+    const imageHeight = streams[0].height || streams[0].coded_height || 720;
+    const imageWidth = streams[0].width || streams[0].coded_width || 1280;
     const leftDefault = 0;
     let imagePaths = [];
 
@@ -138,13 +264,19 @@ app.post("/", async (req: Request, res: Response) => {
             cropSettings[timestamp]
                 ? ((100 - cropSettings[timestamp].bottomOffset) / 100) *
                       imageHeight
-                : imageHeight
+                : 0
         );
 
         const thisLeft = Math.round(
             cropSettings[timestamp] ? cropSettings[timestamp].left : leftDefault
         );
 
+        console.log({
+            thisImageHeight,
+            thisImageWidth,
+            thisLeft,
+            thisTopOffset,
+        });
         await sharp(pathToFolder + "/" + imageName)
             .extract({
                 width: thisImageWidth,
@@ -163,7 +295,7 @@ app.post("/", async (req: Request, res: Response) => {
     fs.writeFile(pathToFolder + "/result.html", html);
     // generate pdf from html
     const browser = await puppeteer.launch({
-        headless: true,
+        headless: "new",
     });
     const page = await browser.newPage();
     await page.goto(`http://localhost:3000/screenshots/${videoId}/result.html`);
