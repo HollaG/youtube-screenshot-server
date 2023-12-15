@@ -298,7 +298,9 @@ app.post("/", async (req: Request, res: Response) => {
         headless: "new",
     });
     const page = await browser.newPage();
-    await page.goto(`http://localhost:3000/screenshots/${videoId}/result.html`);
+    await page.goto(
+        `${process.env.HOSTNAME}/screenshots/${videoId}/result.html`
+    );
 
     await page.emulateMediaType("screen");
 
