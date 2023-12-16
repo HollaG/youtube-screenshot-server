@@ -9,6 +9,8 @@ import sharp from "sharp";
 import PDFDocument, { image, path } from "pdfkit";
 import puppeteer from "puppeteer";
 import { CropSettings } from "./types";
+import JSZip from "jszip";
+
 dotenv.config();
 
 const app = express();
@@ -58,7 +60,18 @@ app.post("/", async (req: Request, res: Response) => {
 
                 videoStream.on("error", (e) => {
                     console.log(e.name);
-                    console.log({ e });
+                    //@ts-expect-error
+                    console.log(e.code!);
+
+                    // @ts-expect-error
+                    if (e.code === "ETIMEDOUT") {
+                        // try again
+                        videoStream.destroy();
+                        console.log("TRYING AGAIN");
+                        start();
+                    } else {
+                        console.error(e);
+                    }
                 });
 
                 videoStream.on("progress", (chunkLength, downloaded, total) => {
@@ -234,8 +247,10 @@ app.post("/", async (req: Request, res: Response) => {
     const imageHeight = streams[0].height || streams[0].coded_height || 720;
     const imageWidth = streams[0].width || streams[0].coded_width || 1280;
     const leftDefault = 0;
-    let imagePaths = [];
 
+    let totalHeight = 0;
+
+    const zip = new JSZip();
     for (const imageName of imageNames) {
         console.log(imageName);
         const newImagePath = pathToFolder + "/" + "cropped-" + imageName;
@@ -250,6 +265,8 @@ app.post("/", async (req: Request, res: Response) => {
                       (cropSettings[timestamp].bottom / 100) * imageHeight
                 : imageHeight
         );
+
+        totalHeight = totalHeight + thisImageHeight;
 
         const thisImageWidth = Math.round(
             cropSettings[timestamp]
@@ -277,16 +294,18 @@ app.post("/", async (req: Request, res: Response) => {
             thisLeft,
             thisTopOffset,
         });
-        await sharp(pathToFolder + "/" + imageName)
-            .extract({
-                width: thisImageWidth,
-                height: thisImageHeight,
-                left: thisLeft,
-                top: thisTopOffset,
-            })
-            .toFile(newImagePath);
 
-        imagePaths.push(newImagePath);
+        const sharpData = sharp(pathToFolder + "/" + imageName).extract({
+            width: thisImageWidth,
+            height: thisImageHeight,
+            left: thisLeft,
+            top: thisTopOffset,
+        });
+
+        const blob = await sharpData.toBuffer();
+        await sharpData.toFile(newImagePath);
+
+        zip.file(`${timestamp}.png`, blob);
     }
 
     // generate HTML
@@ -305,15 +324,46 @@ app.post("/", async (req: Request, res: Response) => {
     await page.emulateMediaType("screen");
 
     const pdfPath = pathToFolder + "/result.pdf";
+
+    // calculate the px height (which is # of images * max of thisImageHeight + 100)
+    console.log({ totalHeight });
+
+    let height = await page.evaluate(
+        () => document.documentElement.offsetHeight
+    );
+
+    console.log({ height });
     const pdf = await page.pdf({
         path: pdfPath,
-        margin: { top: "100px", right: "50px", bottom: "100px", left: "50px" },
+        margin: {
+            bottom: 0,
+            top: 0,
+            left: 0,
+            right: 0,
+        },
         printBackground: true,
-        format: "A4",
+        // format: "A4",
+        height: `${height + 100}px`, // add 100 to account for page vertical margins
     });
 
+    // zip the files
+    zip.file("result.pdf", pdf);
+
+    const content = await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: {
+            level: 9,
+        },
+    });
+
+    await fs.writeFile(
+        `${pathToFolder}/result.zip`,
+        Buffer.from(await content.arrayBuffer())
+    );
+
     console.log("---------- DONE -----------");
-    res.download(pdfPath, (err) => {
+    res.download(`${pathToFolder}/result.zip`, (err) => {
         // clear the folder
         fs.rm(pathToFolder, { recursive: true, force: true });
     });
