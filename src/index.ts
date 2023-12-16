@@ -333,6 +333,7 @@ app.post("/", async (req: Request, res: Response) => {
     );
 
     console.log({ height });
+
     const pdf = await page.pdf({
         path: pdfPath,
         margin: {
@@ -342,11 +343,23 @@ app.post("/", async (req: Request, res: Response) => {
             right: 0,
         },
         printBackground: true,
-        // format: "A4",
+        format: "A4",
+    });
+
+    const pdfLong = await page.pdf({
+        path: pdfPath,
+        margin: {
+            bottom: 0,
+            top: 0,
+            left: 0,
+            right: 0,
+        },
+        printBackground: true,
         height: `${height + 100}px`, // add 100 to account for page vertical margins
     });
 
     // zip the files
+    zip.file("result_single_page.pdf", pdfLong);
     zip.file("result.pdf", pdf);
 
     const content = await zip.generateAsync({
