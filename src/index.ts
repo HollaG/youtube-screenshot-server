@@ -316,6 +316,7 @@ app.post("/", limiter, async (req: Request, res: Response) => {
         // generate pdf from html
         const browser = await puppeteer.launch({
             headless: "new",
+            protocolTimeout: 300_000, // 5 minutes
         });
         const page = await browser.newPage();
         await page.goto(
