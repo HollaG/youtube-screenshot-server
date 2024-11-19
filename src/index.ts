@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import bodyParser from "body-parser";
 import ffmpeg from "fluent-ffmpeg";
-import ytdl from "ytdl-core";
+import ytdl from "@distube/ytdl-core";
 import fs from "fs-extra";
 import sharp from "sharp";
 import PDFDocument, { image, path } from "pdfkit";
@@ -105,7 +105,7 @@ app.post("/", limiter, async (req: Request, res: Response) => {
             return new Promise((resolve, reject) => {
                 let startTime: number;
                 const start = () => {
-                    const videoStream = ytdl(url, { quality: 136 });
+                    const videoStream = ytdl(url);
                     videoStream.once("response", () => {
                         startTime = Date.now();
                         if (LOG_LEVEL >= VERBOSE_LEVEL)
@@ -368,7 +368,8 @@ app.post("/", limiter, async (req: Request, res: Response) => {
         if (LOG_LEVEL >= INFO_LEVEL) console.info("INFO: Zipped files");
 
         if (LOG_LEVEL >= INFO_LEVEL) console.log("INFO: Completed process");
-        res.download(`${pathToFolder}/result.zip`, (err) => {});
+        // res.download(`${pathToFolder}/result.zip`, (err) => {});
+        res.download(`${pathToFolder}/result.pdf`, `result.pdf`)
     } catch (e: any) {
         res.status(400).json({
             error: true,
